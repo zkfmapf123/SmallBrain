@@ -121,6 +121,23 @@ In Structure B, the lead agent runs the meeting. The hook hands it the meeting s
 - From then on, the principle is handed to that agent every time it starts work.
 - A principle that conflicts with an existing one needs your approval. It shows up on your status page, and if you leave it for 7 days it's cleared away automatically.
 
+## Can I use /compact and /clear?
+
+Yes, and SmallBrain makes them easier.
+
+- **`/compact`**: after the conversation is summarized, a hook puts the current goal and status back in. What the session was doing (whether a discussion is in progress, since when the vault changed) carries over too.
+- **`/clear`**: the conversation starts fresh but the vault doesn't, so the goal, status, and open meetings the hook injects are enough to pick up the work.
+
+## Does a bigger vault cost more tokens?
+
+Barely. What gets injected into agents (the digest) has a size cap.
+
+- The goal and status are cut at a fixed length, with a pointer to the original file.
+- Open meetings, principles, and shared lessons show the latest 10, then "N more".
+- Work journals are never injected. Agents follow links when they need them.
+
+With 100 threads, 50 lessons, 30 principles, and 200 journals, the digest stays under 10KB. Without the caps, the same vault produced over 100KB.
+
 ## What you look at
 
 Just `vault/00_system/03_status.md`. It has three things:

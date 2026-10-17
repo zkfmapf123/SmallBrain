@@ -177,7 +177,10 @@ b.hook("SessionStart", session_id="s4")
 time.sleep(0.05)
 (b.v / "30_projects/y.md").write_text(FM.format(t="doc", a="supervisor"))
 (b.v / "00_system/03_status.md").write_text(FM.format(t="status", a="supervisor"))
-assert b.hook("Stop", session_id="s4") == ""
+time.sleep(0.05)
+b.hook("SubagentStart", agent_type="critic", agent_id="cr4")
+b.hook("SubagentStop", agent_type="critic", agent_id="cr4", last_assistant_message="상태 갱신 뒤 저장된 보고")
+assert b.hook("Stop", session_id="s4") == ""  # 상태 갱신 뒤 자동 저장된 journal로는 다시 요청하지 않음
 
 # 논의 요청이면 회의 스레드: 메인 세션과 팀장 agent에게 안내, 스레드 없으면 Stop에서 한 번 요청
 b.hook("SessionStart", session_id="d1")
@@ -203,6 +206,36 @@ t2.mkdir(parents=True)
 assert b.hook("Stop", session_id="d1") == ""  # 스레드가 있고 상태도 최신이면 요청 없음
 import shutil
 shutil.rmtree(t2)
+
+# /compact와 resume은 같은 session_id로 SessionStart가 다시 온다: 논의 표시와 시작 시각 유지, digest는 다시 주입
+b.hook("SessionStart", session_id="c1", source="startup")
+b.hook("UserPromptSubmit", session_id="c1", prompt="배포 방식 논의해줘")
+before = json.loads((b.v / ".smallbrain/session-c1.json").read_text())
+assert "메인 세션 (팀장)" in ctx(b.hook("SessionStart", session_id="c1", source="compact"))
+assert json.loads((b.v / ".smallbrain/session-c1.json").read_text()) == before
+assert "discussion" not in json.loads(b.hook("SessionStart", session_id="c2", source="clear") and
+                                      (b.v / ".smallbrain/session-c2.json").read_text())  # /clear는 새 세션
+
+# vault가 아무리 커져도 digest 크기는 일정 범위 안
+big = Project()
+for n in ("lead", "w1"):
+    big.define(n, "d")
+big.run("init")
+for i in range(100):
+    d = big.v / f"20_threads/2026-10-{i:03d}-t"
+    d.mkdir(parents=True)
+    (d / "index.md").write_text(f"---\ntype: thread\nauthor: lead\ncreated: 2026-10-17\nstatus: open\nparticipants: [w1]\n---\n")
+for i in range(50):
+    (big.v / f"40_knowledge/42_lessons/l{i}.md").write_text(f"---\ntype: principle\nauthor: lead\ncreated: 2026-10-17\nstatus: active\ntitle: 교훈 {i} 긴 문장 긴 문장 긴 문장\n---\n")
+w1 = next(big.v.glob("10_agents/*_w1"))
+for i in range(30):
+    (w1 / f"principles/p{i}.md").write_text(f"---\ntype: principle\nauthor: lead\ncreated: 2026-10-17\nstatus: trial\ntitle: 원칙 {i} 긴 문장 긴 문장\n---\n")
+for i in range(200):
+    (w1 / f"journal/j{i}.md").write_text("---\ntype: journal\nauthor: w1\ncreated: 2026-10-17\n---\n" + "보고 " * 2000)
+(big.v / "00_system/02_now.md").write_text("---\ntype: now\nauthor: lead\ncreated: 2026-10-17\n---\n" + ("긴 줄 " * 300 + "\n") * 300)
+for who in (None, "w1"):
+    size = len(big.run("digest", *([who] if who else [])).encode())
+    assert size < 10000, (who, size)
 
 # 하루 지난 상태 파일 정리
 old = b.v / ".smallbrain/agent-old.json"

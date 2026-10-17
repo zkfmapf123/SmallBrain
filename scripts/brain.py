@@ -28,6 +28,7 @@ EXPIRE_DAYS = 7
 STATE_TTL = 86400
 NOW_LINES = 40
 PRINCIPLE_MAX = 10
+LIST_MAX = 10
 NAME_RE = re.compile(r"[a-z][a-z0-9-]*")
 TURN_RE = re.compile(r"^\d{8}-\d{4}-(.+)\.md$")
 DELEGATE_TOOLS = ("Agent", "Task")
@@ -291,10 +292,18 @@ def titles(folder):
     return out
 
 
-def clip(text, n):
+def clip(text, n, chars=2000):
+    """줄 수와 글자 수 둘 다로 자른다. digest가 vault 크기와 상관없이 일정한 크기를 넘지 않게."""
     lines = text.strip().splitlines()
-    more = f"\n... ({len(lines) - n}줄 더, 원본 참고)" if len(lines) > n else ""
-    return "\n".join(lines[:n]) + more
+    out = "\n".join(lines[:n])
+    if len(lines) > n or len(out) > chars:
+        out = out[:chars] + "\n... (원본 파일 참고)"
+    return out
+
+
+def cap(items, what, n=LIST_MAX):
+    """목록은 최근 n개만 넣는다."""
+    return items[-n:] + [f"- ... 외 {len(items) - n}개 ({what})"] if len(items) > n else items
 
 
 def expire():
@@ -350,10 +359,11 @@ def build_index():
 def digest_supervisor(agent=None):
     """팀장 digest. agent=None이면 메인 세션."""
     now = clip(meta(VAULT / "00_system" / "02_now.md")[1], NOW_LINES)
-    status = clip(meta(VAULT / "00_system" / "03_status.md")[1], 30)
+    status = clip(meta(VAULT / "00_system" / "03_status.md")[1], 30, 1500)
     roster = [f"{d.name.partition('_')[2]}({role_of(d.name.partition('_')[2])})" for d in agent_dirs()]
     n_pending = sum(1 for p in notes() if meta(p)[0].get("status") == "pending-approval")
-    open_threads = [f"- `{t['path']}/` — {t['title']}, 마지막 {t['last'] or '-'}" for t in threads()]
+    open_threads = cap([f"- `{t['path']}/` — {t['title']}, 마지막 {t['last'] or '-'}" for t in threads()],
+                       "열린 스레드 전체는 00_index")
     who = f"`{agent}` agent (팀장)" if agent else "메인 세션 (팀장)"
     parts = [
         f"# SmallBrain — {who}\nvault: `{VAULT}` (아래 경로는 vault 기준)\n지금 시각: {now_str()}",
@@ -363,7 +373,8 @@ def digest_supervisor(agent=None):
         f"## agents\n{', '.join(roster) or '없음 (.claude/agents/ 에 정의하면 처음 일할 때 자동 등록)'}\n사람 결정 대기: {n_pending}건",
     ]
     if agent:
-        parts.append(f"## 내 원칙\n" + "\n".join(titles(agent_dir(agent) / "principles") or ["- 아직 없음"]))
+        parts.append(f"## 내 원칙\n" + "\n".join(cap(titles(agent_dir(agent) / "principles"), "정리 필요")
+                                              or ["- 아직 없음"]))
         parts.append(f"vault에 쓰는 노트의 frontmatter `author`는 `{agent}`로 한다.")
     parts.append(SUPERVISOR_RULES)
     return "\n\n".join(parts)
@@ -375,14 +386,15 @@ def digest_worker(agent):
     principles = titles(d / "principles")
     warn = f"\n경고: 원칙 {len(principles)}개. 팀장에게 정리(합치기)를 제안한다." if len(principles) > PRINCIPLE_MAX else ""
     mine = [t for t in threads() if agent in t["parts"] or "all" in t["parts"]]
-    lines = [f"- `{t['path']}/` — 턴 {t['turns']}개, 마지막 {t['last'] or '-'}" for t in mine]
+    lines = cap([f"- `{t['path']}/` — 턴 {t['turns']}개, 마지막 {t['last'] or '-'}" for t in mine], "열린 스레드")
     rules = WORKER_WRITE_RULES if can_write(agent) else WORKER_READONLY_RULES
     return "\n\n".join([
         f"# SmallBrain digest — {agent}\nvault: `{VAULT}` (아래 경로는 vault 기준)\n지금 시각: {now_str()}",
         "## 지금 (00_system/02_now.md)\n" + clip(meta(VAULT / "00_system" / "02_now.md")[1], NOW_LINES),
-        f"## 내 역할 ({own}/profile.md)\n" + meta(d / "profile.md")[1].strip(),
-        "## 내 원칙\n" + "\n".join(principles or ["- 아직 없음"]) + warn,
-        "## 공통 교훈\n" + "\n".join(titles(VAULT / "40_knowledge" / "42_lessons") or ["- 아직 없음"]),
+        f"## 내 역할 ({own}/profile.md)\n" + clip(meta(d / "profile.md")[1], 20, 1000),
+        "## 내 원칙\n" + "\n".join(cap(principles, "팀장에게 정리 요청") or ["- 아직 없음"]) + warn,
+        "## 공통 교훈\n" + "\n".join(cap(titles(VAULT / "40_knowledge" / "42_lessons"), "42_lessons")
+                                    or ["- 아직 없음"]),
         "## 나에게 열린 스레드\n" + "\n".join(lines or ["- 없음"]),
         rules.format(own=own, agent=agent),
     ])
@@ -612,7 +624,10 @@ def hook(event):
 
     if event == "SessionStart":
         sweep()
-        sf.write_text(json.dumps({"t": time.time(), "asked": False}))
+        # /compact와 resume은 같은 session_id로 다시 온다. 세션 기록(시작 시각, 논의 표시)은 유지하고 digest만 다시 넣는다.
+        # /clear는 새 session_id라 새로 시작한다.
+        if ss is None or not sf.exists():
+            sf.write_text(json.dumps({"t": time.time(), "asked": False}))
         build_index()
         emit_context(event, digest())
 
@@ -681,8 +696,10 @@ def hook(event):
                                "20_threads/YYYY-MM-DD-<주제>/index.md를 만들어라(frontmatter type: thread, author, "
                                "created, status, participants, title / 본문 ## 안건 ## 합의 ## 남은 질문). "
                                "각 agent 의견은 journal 링크로 달고, 결론은 41_decisions 노트와 서로 링크한다.")
+        # journal은 hook이 agent 종료 때 자동 저장하는 기록이라 상태 페이지보다 늦게 써질 수밖에 없다. 판정에서 뺀다
         skip = {"00_system/00_index.md", "00_system/03_status.md"}
-        changed = [p.stat().st_mtime for p in notes() if rel(p) not in skip and p.stat().st_mtime >= ss["t"]]
+        changed = [p.stat().st_mtime for p in notes()
+                   if rel(p) not in skip and "journal" not in p.relative_to(VAULT).parts and p.stat().st_mtime >= ss["t"]]
         status = VAULT / "00_system" / "03_status.md"
         if changed and not ss["asked"] and (not status.exists() or status.stat().st_mtime < max(changed)):
             ss["asked"] = True  # 세션당 한 번만 요청한다

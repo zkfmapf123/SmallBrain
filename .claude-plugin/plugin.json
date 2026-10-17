@@ -1,7 +1,7 @@
 {
   "name": "smallbrain",
   "displayName": "SmallBrain",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Obsidian vault를 supervisor와 sub-agent들의 공용 뇌로 쓰게 한다: digest 주입, 쓰기 권한, 기록 강제, 반성 승격",
   "author": { "name": "idong-gyu" },
   "license": "MIT",
