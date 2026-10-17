@@ -3,6 +3,9 @@
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/brain.py hook SessionStart" }] }
     ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/brain.py hook UserPromptSubmit" }] }
+    ],
     "SubagentStart": [
       { "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/brain.py hook SubagentStart" }] }
     ],

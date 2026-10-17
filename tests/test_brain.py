@@ -179,6 +179,31 @@ time.sleep(0.05)
 (b.v / "00_system/03_status.md").write_text(FM.format(t="status", a="supervisor"))
 assert b.hook("Stop", session_id="s4") == ""
 
+# 논의 요청이면 회의 스레드: 메인 세션과 팀장 agent에게 안내, 스레드 없으면 Stop에서 한 번 요청
+b.hook("SessionStart", session_id="d1")
+assert b.hook("UserPromptSubmit", session_id="d1", prompt="로그인 버튼 고쳐줘") == ""
+assert "회의 스레드" not in ctx(b.hook("SubagentStart", session_id="d1", agent_type="supervisor", agent_id="sup9"))
+assert "회의" in ctx(b.hook("UserPromptSubmit", session_id="d1", prompt="1+1은 왜 2인지 논의해줘"))
+assert "회의 스레드로 진행" in ctx(b.hook("SubagentStart", session_id="d1", agent_type="supervisor", agent_id="sup10"))
+assert "회의 스레드로 진행" not in ctx(b.hook("SubagentStart", session_id="d1", agent_type="critic", agent_id="cr9"))
+time.sleep(0.05)
+(b.v / "00_system/03_status.md").write_text(FM.format(t="status", a="supervisor"))
+assert b.hook("Stop", session_id="d1", background_tasks=[{"id": "sup10"}]) == ""  # 팀장 agent가 아직 일하는 중
+assert b.hook("UserPromptSubmit", session_id="d1",
+              prompt="<task-notification>\n<summary>Agent \"논의\" finished</summary>") == ""  # 알림은 무시
+out = b.hook("Stop", session_id="d1")
+assert out["decision"] == "block" and "회의 스레드가 없다" in out["reason"]
+assert b.hook("Stop", session_id="d1") == ""  # 한 번만
+b.hook("UserPromptSubmit", session_id="d1", prompt="인증 방식 토론해줘")
+time.sleep(0.05)
+t2 = b.v / "20_threads/2026-10-17-auth-method"
+t2.mkdir(parents=True)
+(t2 / "index.md").write_text("---\ntype: thread\nauthor: supervisor\nstatus: open\ncreated: 2026-10-17\n---\n")
+(b.v / "00_system/03_status.md").write_text(FM.format(t="status", a="supervisor"))
+assert b.hook("Stop", session_id="d1") == ""  # 스레드가 있고 상태도 최신이면 요청 없음
+import shutil
+shutil.rmtree(t2)
+
 # 하루 지난 상태 파일 정리
 old = b.v / ".smallbrain/agent-old.json"
 old.write_text("{}")

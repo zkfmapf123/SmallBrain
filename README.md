@@ -100,7 +100,7 @@ Claude Code's built-in agents such as Explore and Plan are not registered. If th
 
 ## Meetings
 
-When several agents' opinions are needed, the lead opens a meeting on its own. To start one yourself:
+Collecting opinions from two or more agents on the same topic is a meeting, and a meeting always gets a thread. When you ask for a discussion ("discuss", "debate", "meeting", or in Korean 논의, 토론, 회의, 의견 모아), the hook treats it as a discussion request and tells the lead to run it as a meeting thread. If the work ends without a thread, it asks once more. To start one yourself:
 
 ```
 /smallbrain:meeting Decide the auth method

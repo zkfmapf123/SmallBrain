@@ -121,11 +121,17 @@ SUPERVISOR_RULES = """## 팀장 규칙 (SmallBrain)
 - vault를 바꾼 응답을 끝내기 전에 `00_system/03_status.md`를 덮어쓴다. 사람이 보는 페이지라 세 섹션만 쓴다: ## 현재 상태 / ## 최근 한 일(원본 [[링크]]) / ## 사람 결정 필요(embed 한 줄 유지).
 - `00_system/00_index.md`는 스크립트가 만든다. 직접 고치지 않는다.
 
-## 회의 절차 (여러 agent 의견이 필요할 때)
+## 회의 절차
+같은 주제로 agent 2명 이상의 의견을 모으면 회의다. 회의는 반드시 스레드를 만들어 진행한다.
 1. `20_threads/YYYY-MM-DD-<주제>/index.md`를 만든다: frontmatter `type: thread`, `author`, `created: YYYY-MM-DD`, `status: open`, `participants: [이름, ...]`, `title`. 본문 `## 안건` / `## 합의` / `## 남은 질문`. (vault의 모든 노트는 `type`, `author`, `created`가 있어야 저장된다)
 2. 라운드마다 참석자를 부른다. 프롬프트에 스레드 경로를 적고, 앞 발언(turns/와 각자 journal)을 읽고 의견을 내라고 한다.
 3. 라운드가 끝나면 index.md의 합의/남은 질문을 갱신하고, 각 발언(turn 파일이나 자동 journal)을 [[링크]]로 단다.
 4. 최대 3라운드. 결론을 `40_knowledge/41_decisions/`에 남기고 index.md를 `status: resolved`로 바꾼다."""
+
+DISCUSS_RE = re.compile(r"논의|토론|회의|의견\s*(을|좀)?\s*(모아|정리|들어|나눠|교환)|discuss|debate|meeting", re.I)
+DISCUSS_NOTE = ("SmallBrain: 이번 요청은 여러 agent의 논의다. 같은 주제로 agent 2명 이상의 의견을 모으면 회의이고, "
+                "회의는 `20_threads/YYYY-MM-DD-<주제>/index.md` 스레드를 만들어 진행한다(절차는 팀장 규칙의 회의 절차). "
+                "팀장 agent에게 맡긴다면 위임 프롬프트에 '회의 스레드로 진행'을 적는다.")
 
 WORKER_WRITE_RULES = """## 기록 규칙
 - 내 최종 보고는 hook이 `{own}/journal/`에 자동으로 저장한다. 따로 기록할 필요 없다.
@@ -598,12 +604,25 @@ def hook(event):
     # agent_id가 없으면 메인 세션이다(--agent로 띄워도 agent_type만 있고 agent_id는 없다)
     agent = (data.get("agent_type") or "").split(":")[-1] if agent_id else None
 
+    sf = STATE / f"session-{data.get('session_id')}.json"
+    try:
+        ss = json.loads(sf.read_text())
+    except (OSError, ValueError):
+        ss = None
+
     if event == "SessionStart":
         sweep()
-        sf = STATE / f"session-{data.get('session_id')}.json"
         sf.write_text(json.dumps({"t": time.time(), "asked": False}))
         build_index()
         emit_context(event, digest())
+
+    elif event == "UserPromptSubmit":
+        prompt = (data.get("prompt") or "").lstrip()
+        # agent 완료 알림(<task-notification> 등)도 이 hook으로 들어온다. 사람이 쓴 요청만 본다
+        if ss is not None and not prompt.startswith("<") and DISCUSS_RE.search(prompt):
+            ss.update(discussion=time.time(), thread_asked=False)
+            sf.write_text(json.dumps(ss))
+            emit_context(event, DISCUSS_NOTE)
 
     elif event == "SubagentStart":
         if not agent_dir(agent) and NAME_RE.fullmatch(agent or ""):
@@ -614,7 +633,10 @@ def hook(event):
         if agent_dir(agent) and not load_state(agent_id):  # background agent가 다시 깨어날 때는 주입하지 않는다
             save_state(agent_id, {"agent": agent, "t": time.time(), "saved": [], "journal": None,
                                   "transcript": None, "pending": False})
-            emit_context(event, digest(agent))
+            text = digest(agent)
+            if ss and ss.get("discussion") and role_of(agent) == "supervisor":
+                text += "\n\n" + DISCUSS_NOTE
+            emit_context(event, text)
 
     elif event == "PreToolUse":
         if data.get("tool_name") in DELEGATE_TOOLS:
@@ -648,24 +670,31 @@ def hook(event):
             return
         sweep()
         build_index()
-        sf = STATE / f"session-{data.get('session_id')}.json"
-        try:
-            ss = json.loads(sf.read_text())
-        except (OSError, ValueError):
+        if ss is None or data.get("background_tasks"):  # background agent가 아직 일하는 중이면 끝난 뒤에 본다
             return
+        reasons = []
+        if ss.get("discussion") and not ss.get("thread_asked"):
+            made = [p for p in (VAULT / "20_threads").glob("*/index.md") if p.stat().st_mtime >= ss["discussion"]]
+            if not made:
+                ss["thread_asked"] = True  # 논의 요청당 한 번만 요청한다
+                reasons.append("SmallBrain: 이번 요청은 여러 agent의 논의였는데 회의 스레드가 없다. "
+                               "20_threads/YYYY-MM-DD-<주제>/index.md를 만들어라(frontmatter type: thread, author, "
+                               "created, status, participants, title / 본문 ## 안건 ## 합의 ## 남은 질문). "
+                               "각 agent 의견은 journal 링크로 달고, 결론은 41_decisions 노트와 서로 링크한다.")
         skip = {"00_system/00_index.md", "00_system/03_status.md"}
         changed = [p.stat().st_mtime for p in notes() if rel(p) not in skip and p.stat().st_mtime >= ss["t"]]
         status = VAULT / "00_system" / "03_status.md"
         if changed and not ss["asked"] and (not status.exists() or status.stat().st_mtime < max(changed)):
             ss["asked"] = True  # 세션당 한 번만 요청한다
+            reasons.append("SmallBrain: 이번 세션에 vault가 바뀌었는데 00_system/03_status.md가 그보다 오래됐다. "
+                           "끝내기 전에 덮어써라(맨 위 frontmatter type/author/created 유지). 사람이 보는 페이지라 "
+                           "이 세 섹션만 쓴다: ## 현재 상태 / ## 최근 한 일(원본 [[링크]]) / "
+                           "## 사람 결정 필요(![[00_index#사람 결정 필요]] 한 줄 유지). "
+                           "이번 작업에서 결정이나 결론이 나왔는데 40_knowledge/41_decisions/에 없으면 함께 남기고, "
+                           "목표나 진행 상황이 바뀌었으면 00_system/02_now.md도 갱신한다.")
+        if reasons:
             sf.write_text(json.dumps(ss))
-            print(json.dumps({"decision": "block", "reason":
-                "SmallBrain: 이번 세션에 vault가 바뀌었는데 00_system/03_status.md가 그보다 오래됐다. "
-                "끝내기 전에 덮어써라(맨 위 frontmatter type/author/created 유지). 사람이 보는 페이지라 "
-                "이 세 섹션만 쓴다: ## 현재 상태 / ## 최근 한 일(원본 [[링크]]) / "
-                "## 사람 결정 필요(![[00_index#사람 결정 필요]] 한 줄 유지). "
-                "이번 작업에서 결정이나 결론이 나왔는데 40_knowledge/41_decisions/에 없으면 함께 남기고, "
-                "목표나 진행 상황이 바뀌었으면 00_system/02_now.md도 갱신한다."}, ensure_ascii=False))
+            print(json.dumps({"decision": "block", "reason": "\n".join(reasons)}, ensure_ascii=False))
 
 
 def main(argv):
