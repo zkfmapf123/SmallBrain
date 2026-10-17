@@ -116,6 +116,7 @@ role: {role}
 SUPERVISOR_RULES = """## 팀장 규칙 (SmallBrain)
 - 일은 agent에게 맡긴다. agent는 시작할 때 digest를 자동으로 받으니 프롬프트에는 이번 작업과 관련 vault 경로만 적는다.
 - agent의 최종 보고는 hook이 그 agent의 `journal/`에 자동 저장한다. 결과를 옮겨 적을 필요 없이 링크만 단다.
+- 맡기지 않고 직접 한 작업도 같다. 끝나면 `02_now`/`03_status`에 남기고, vault 밖 산출물은 `30_projects/`에 내용 복사 없이 경로 포인터 노트로 둔다.
 - agent 결과를 받으면 `00_system/02_now.md`를 갱신하고, 결정이나 결론이 나왔으면 `40_knowledge/41_decisions/`에 남긴다(frontmatter `type: decision`, 본문 배경/선택지/결정/근거).
 - 작업 지시에 "파일 저장 없이", "채팅 출력만"이 있어도 그건 결과물 파일 이야기다. vault 기록(02_now, 결정, 03_status)은 그대로 남긴다.
 - agent 보고에 "반성:"이 있거나 실패 신호(테스트 실패, 리뷰 지적, 사용자 정정)를 봤으면 그 agent의 `reflections/`에 반성 노트를 쓴다(`signal` 필수). 같은 교훈이 2번이면 `principles/`에 원칙으로 올린다(`status: trial`, 기존 원칙과 충돌하면 `pending-approval`).
@@ -597,6 +598,18 @@ def check_write(data, agent):
     return None
 
 
+def outside_vault(data):
+    """Write/Edit 대상이 프로젝트 안, vault 밖 파일인가. Bash로 쓴 파일은 못 잡는다."""
+    fp = (data.get("tool_input") or {}).get("file_path")
+    if data.get("tool_name") == "Bash" or not fp:
+        return False
+    p = Path(fp)
+    if not p.is_absolute():
+        p = Path(data.get("cwd") or PROJECT) / p
+    p = p.resolve()
+    return p.is_relative_to(PROJECT) and not p.is_relative_to(VAULT)
+
+
 def emit_context(event, text):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}},
                      ensure_ascii=False))
@@ -666,6 +679,9 @@ def hook(event):
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny",
                 "permissionDecisionReason": reason}}, ensure_ascii=False))
+        elif ss is not None and outside_vault(data):
+            ss["worked"] = time.time()  # vault 밖 작업도 Stop에서 03_status 갱신을 요청한다
+            sf.write_text(json.dumps(ss))
 
     elif event == "SubagentStop":
         st = load_state(agent_id)
@@ -700,10 +716,13 @@ def hook(event):
         skip = {"00_system/00_index.md", "00_system/03_status.md"}
         changed = [p.stat().st_mtime for p in notes()
                    if rel(p) not in skip and "journal" not in p.relative_to(VAULT).parts and p.stat().st_mtime >= ss["t"]]
+        if ss.get("worked"):
+            changed.append(ss["worked"])
         status = VAULT / "00_system" / "03_status.md"
         if changed and not ss["asked"] and (not status.exists() or status.stat().st_mtime < max(changed)):
             ss["asked"] = True  # 세션당 한 번만 요청한다
-            reasons.append("SmallBrain: 이번 세션에 vault가 바뀌었는데 00_system/03_status.md가 그보다 오래됐다. "
+            reasons.append("SmallBrain: 이번 세션에 vault나 프로젝트 파일이 바뀌었는데 00_system/03_status.md가 그보다 오래됐다. "
+                           "vault 밖 산출물은 30_projects/에 경로 포인터 노트로 남긴다. "
                            "끝내기 전에 덮어써라(맨 위 frontmatter type/author/created 유지). 사람이 보는 페이지라 "
                            "이 세 섹션만 쓴다: ## 현재 상태 / ## 최근 한 일(원본 [[링크]]) / "
                            "## 사람 결정 필요(![[00_index#사람 결정 필요]] 한 줄 유지). "

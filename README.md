@@ -146,6 +146,8 @@ Just `vault/00_system/03_status.md`. It has three things:
 - what was done recently (with links to the original notes)
 - what you need to decide
 
+If the supervisor edits project files itself instead of handing work to an agent, it is still asked once to update this page before it finishes.
+
 The rest of the vault is the agents' records. You don't need to read it. Follow the links if you're curious.
 
 ## Vault layout

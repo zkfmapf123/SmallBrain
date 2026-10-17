@@ -181,6 +181,14 @@ time.sleep(0.05)
 b.hook("SubagentStart", agent_type="critic", agent_id="cr4")
 b.hook("SubagentStop", agent_type="critic", agent_id="cr4", last_assistant_message="상태 갱신 뒤 저장된 보고")
 assert b.hook("Stop", session_id="s4") == ""  # 상태 갱신 뒤 자동 저장된 journal로는 다시 요청하지 않음
+# vault 밖 프로젝트 파일만 고쳐도 요청한다. 프로젝트 밖 파일(~/.claude 메모리 등)은 세지 않는다
+b.hook("SessionStart", session_id="s5")
+b.hook("PreToolUse", session_id="s5", tool_name="Write", tool_input={"file_path": "/tmp/elsewhere.md"})
+assert b.hook("Stop", session_id="s5") == ""
+b.hook("PreToolUse", session_id="s5", tool_name="Edit", tool_input={"file_path": str(b.root / "reference/a.md")})
+out = b.hook("Stop", session_id="s5")
+assert out["decision"] == "block" and "30_projects" in out["reason"]
+assert "직접 한 작업" in ctx(b.hook("SessionStart", session_id="s6"))
 
 # 논의 요청이면 회의 스레드: 메인 세션과 팀장 agent에게 안내, 스레드 없으면 Stop에서 한 번 요청
 b.hook("SessionStart", session_id="d1")
