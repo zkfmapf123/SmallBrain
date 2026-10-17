@@ -4,9 +4,9 @@ description: SmallBrain agent의 반성 노트를 원칙으로 승격하거나 �
 ---
 # SmallBrain reflect
 
-supervisor(메인 세션)가 실행한다. sub-agent는 `principles/`를 쓸 수 없다.
+팀장(메인 세션이나 팀장 agent)이 실행한다. 일꾼 agent는 `principles/`를 쓸 수 없다.
 
-1. 대상 agent의 `vault/10_agents/NN_<이름>/reflections/`를 읽고 원인이나 다음 규칙이 같은 것이 2번 이상 나온 것을 찾는다. 한 번뿐이면 승격하지 않는다.
+1. 대상 agent의 `vault/10_agents/NN_<이름>/reflections/`와 `journal/`의 `반성:` 섹션을 읽는다. 쓰기 도구가 없는 agent는 반성을 보고 안에 `반성:`으로만 남기므로, 아직 reflection 노트로 옮겨지지 않은 것은 먼저 `reflections/`에 옮긴다(`signal`에 journal 링크). 그다음 원인이나 다음 규칙이 같은 것이 2번 이상 나온 것을 찾는다. 한 번뿐이면 승격하지 않는다.
 2. 원칙 노트를 만든다: `vault/10_agents/NN_<이름>/principles/YYYY-MM-DD-<slug>.md`
    ```markdown
    ---
