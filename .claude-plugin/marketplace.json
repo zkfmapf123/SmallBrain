@@ -1,0 +1,14 @@
+{
+  "name": "smallbrain",
+  "description": "SmallBrain: Obsidian vault as a shared brain for a supervisor and its sub-agents",
+  "owner": {
+    "name": "zkfmapf123"
+  },
+  "plugins": [
+    {
+      "name": "smallbrain",
+      "source": "./",
+      "description": "Obsidian vault를 supervisor와 sub-agent들의 공용 뇌로 쓰게 한다"
+    }
+  ]
+}

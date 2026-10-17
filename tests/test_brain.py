@@ -10,7 +10,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "brain.py"
 TMP = Path(tempfile.mkdtemp()).resolve()
 V = TMP / "vault"
-ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(TMP)}
+ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(TMP), "HOME": str(TMP / "home")}  # 실제 ~/.claude/agents 차단
 FM = "---\ntype: journal\nauthor: {a}\ncreated: 2026-10-17\n---\n본문\n"
 
 
@@ -29,23 +29,35 @@ def write(agent, path, content="", tool="Write"):
     return out["hookSpecificOutput"]["permissionDecision"] if out else "allow"
 
 
-# init, hire
-run("init")
-assert (V / "00_system/00_index.md").exists() and (V / "00_system/03_status.md").exists()
-run("hire", "builder", "구현 담당")
-run("hire", "code-reviewer", "리뷰 담당")
-assert (TMP / ".claude/agents/builder.md").exists()
-assert (V / "10_agents/11_builder/journal").is_dir() and (V / "10_agents/12_code-reviewer").is_dir()
+def define(name, desc, home=TMP):
+    f = home / ".claude/agents" / f"{name}.md"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f"---\nname: {name}\ndescription: {desc}\n---\n원래 지침\n")
+    return f
 
-# 이미 있던 agent는 init 재실행으로 등록되고, 정의 파일은 그대로다
-legacy = TMP / ".claude/agents/legacy-dev.md"
-legacy.write_text("---\nname: legacy-dev\ndescription: 기존 개발자\n---\n원래 지침\n")
+
+# init은 이미 정의된 agent를 등록하고, 정의 파일은 건드리지 않는다
+builder = define("builder", "구현 담당")
+define("code-reviewer", "리뷰 담당")
 (TMP / ".claude/agents/Bad_Name.md").write_text("원래 지침\n")
 out = run("init")
-assert "legacy-dev" in out and "Bad_Name" in out
-assert "기존 개발자" in (V / "10_agents/13_legacy-dev/profile.md").read_text()
-assert legacy.read_text().endswith("원래 지침\n") and "## Brain" not in legacy.read_text()
-assert not (V / "10_agents/14_builder").exists()  # 재실행해도 중복 등록 없음
+assert "Bad_Name" in out
+assert (V / "00_system/00_index.md").exists() and (V / "00_system/03_status.md").exists()
+assert (V / "10_agents/11_builder/journal").is_dir() and (V / "10_agents/12_code-reviewer").is_dir()
+assert "구현 담당" in (V / "10_agents/11_builder/profile.md").read_text()
+assert builder.read_text().endswith("---\n원래 지침\n")
+run("init")
+assert len(list((V / "10_agents").iterdir())) == 2  # 재실행해도 중복 등록 없음
+
+# init 뒤에 만든 agent는 처음 일할 때 자동 등록된다 (사용자 scope agent 포함)
+define("late-dev", "나중에 만든 개발자")
+define("user-dev", "사용자 scope agent", home=TMP / "home")
+for name, aid in (("late-dev", "x1"), ("user-dev", "x2")):
+    out = run("hook", "SubagentStart", data={"agent_type": name, "agent_id": aid})
+    assert f"digest — {name}" in out["hookSpecificOutput"]["additionalContext"]
+assert (V / "10_agents/13_late-dev").is_dir() and (V / "10_agents/14_user-dev").is_dir()
+run("hook", "SubagentStart", data={"agent_type": "Explore", "agent_id": "x3"})
+assert not any("Explore" in d.name for d in (V / "10_agents").iterdir())  # 기본 agent는 등록 안 함
 
 # PreToolUse 권한
 assert write("builder", "10_agents/11_builder/journal/2026-10-17-1400.md", FM.format(a="builder")) == "allow"

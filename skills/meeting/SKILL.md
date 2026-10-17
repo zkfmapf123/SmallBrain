@@ -4,7 +4,7 @@ description: 여러 SmallBrain agent의 의견을 모아 결정할 때 쓴다. s
 ---
 # SmallBrain meeting
 
-인자: 주제, 참석 agent. 참석자를 안 정했으면 주제에 맞는 hire된 agent를 고른다.
+인자: 주제, 참석 agent. 참석자를 안 정했으면 `.claude/agents/`에 정의된 agent 중 주제에 맞는 것을 고른다.
 
 1. 스레드를 연다: `vault/20_threads/YYYY-MM-DD-<주제-slug>/index.md`
    ```markdown

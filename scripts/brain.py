@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """SmallBrain: Obsidian vault를 supervisor(메인 세션)와 sub-agent들의 공용 뇌로 쓰게 한다.
 
-  brain.py init                  vault 골격 생성
-  brain.py hire <name> [역할]    agent 정의 + vault 폴더 생성
-  brain.py index                 00_index 재생성 + 만료 처리
+  brain.py init                  vault 골격 생성 + 정의된 agent 등록
+  brain.py index                00_index 재생성 + 만료 처리
   brain.py digest [agent]        주입될 digest 출력 (디버깅용)
   brain.py hook <event>          Claude Code hook 처리 (stdin: hook JSON)
 
@@ -97,22 +96,8 @@ created: {today}
 {role}
 """
 
-AGENT = """---
-name: {name}
-description: {desc}
----
-{role}
-
-## Brain
-시작할 때 주입되는 SmallBrain digest가 내 맥락이다. 더 필요하면 digest에 적힌 경로의 원본을 읽는다.
-- vault에는 `{own}/journal/`, `{own}/reflections/`, `{vault}/20_threads/<스레드>/turns/YYYYMMDD-HHMM-{name}.md`에 **새 파일만** 만든다. 그 밖은 읽기만 한다.
-- 끝내기 전에 기록을 하나 이상 남긴다. 회의 중이면 turn, 아니면 journal(한 일 / 결과 / 검증한 것 / 확인 못 한 것).
-- 테스트 실패, 리뷰 지적, 사용자 정정 같은 실패 신호가 있었으면 `reflections/`에 반성 노트를 쓴다.
-- 추정은 "가정:", 확인하지 않은 것은 "확인 못 함"으로 쓴다.
-"""
-
 SUPERVISOR_RULES = """## supervisor 규칙 (SmallBrain)
-- 일은 hire된 agent에게 맡긴다. 그들은 시작할 때 digest를 자동으로 받으니 프롬프트에는 이번 작업과 관련 vault 경로만 적는다.
+- 일은 sub-agent에게 맡긴다. 직접 정의한 agent(.claude/agents/)는 시작할 때 digest를 자동으로 받으니 프롬프트에는 이번 작업과 관련 vault 경로만 적는다.
 - 여러 agent의 의견이 필요하면 `/smallbrain:meeting`을 쓴다.
 - agent 결과를 받으면 `00_system/02_now.md`를 갱신하고, 결정은 `40_knowledge/41_decisions/`에 남긴다.
 - 실패 신호를 본 agent는 반성을 남긴다. 같은 교훈이 2번이면 `/smallbrain:reflect`로 원칙을 승격한다.
@@ -316,33 +301,42 @@ def digest(agent=None):
         "## 지금 (00_system/02_now.md)\n" + now,
         "## 사람용 상태 (00_system/03_status.md)\n" + status,
         "## 열린 스레드\n" + "\n".join(open_threads or ["- 없음"]),
-        f"## agents\n{', '.join(names) or '없음 (/smallbrain:hire 로 추가)'}\n사람 결정 대기: {n_pending}건",
+        f"## agents\n{', '.join(names) or '없음 (.claude/agents/ 에 agent를 정의하면 처음 일할 때 자동 등록)'}\n사람 결정 대기: {n_pending}건",
         SUPERVISOR_RULES,
     ])
 
 
 NAME_RE = re.compile(r"[a-z][a-z0-9-]*")
+AGENT_HOMES = [PROJECT / ".claude" / "agents", Path.home() / ".claude" / "agents"]
+
+
+def defined_agents():
+    """프로젝트와 사용자 .claude/agents/ 에 정의된 agent: {name: description}. 기본 agent(Explore 등)는 없다."""
+    out = {}
+    for home in AGENT_HOMES:
+        for f in sorted(home.glob("*.md")):
+            fm = meta(f)[0]
+            out.setdefault(fm.get("name") or f.stem, fm.get("description") or "")
+    return out
 
 
 def init():
-    """vault를 만들고 .claude/agents/ 에 이미 있는 agent를 전부 등록한다. 다시 실행해도 안전하다."""
+    """vault를 만들고 이미 정의된 agent를 전부 등록한다. 다시 실행해도 안전하다."""
     for d in DIRS:
         (VAULT / d).mkdir(parents=True, exist_ok=True)
     for name, tpl in (("01_rules.md", RULES), ("02_now.md", NOW), ("03_status.md", STATUS)):
         write_new(VAULT / "00_system" / name, tpl.replace("{today}", today()))
     added, skipped = [], []
-    for f in sorted((PROJECT / ".claude" / "agents").glob("*.md")):
-        fm = meta(f)[0]
-        name = fm.get("name") or f.stem
+    for name, desc in defined_agents().items():
         if not NAME_RE.fullmatch(name):
             skipped.append(name)
         elif not agent_dir(name):
-            register(name, fm.get("description") or "")
+            register(name, desc)
             added.append(name)
     build_index()
     print(f"vault 준비됨: {VAULT}")
     if added:
-        print(f"기존 agent 등록: {', '.join(added)}")
+        print(f"agent 등록: {', '.join(added)}")
     if skipped:
         print(f"이름이 소문자 kebab-case가 아니라 건너뜀: {', '.join(skipped)}")
 
@@ -357,20 +351,6 @@ def register(name, role):
         (d / sub).mkdir(parents=True, exist_ok=True)
     write_new(d / "profile.md", PROFILE.format(today=today(), name=name, role=role or "(역할 미정)"))
     return d
-
-
-def hire(name, role=""):
-    if not NAME_RE.fullmatch(name):
-        sys.exit("agent 이름은 소문자 kebab-case여야 한다 (예: builder, code-reviewer)")
-    if not (VAULT / "10_agents").is_dir():
-        sys.exit("vault가 없다. 먼저 init")
-    d = register(name, role)
-    vault_rel = os.path.relpath(VAULT, PROJECT)
-    write_new(PROJECT / ".claude" / "agents" / f"{name}.md", AGENT.format(
-        name=name, desc=role or "TODO: supervisor가 언제 이 agent를 부를지 한 줄로",
-        role=role, own=f"{vault_rel}/{rel(d)}", vault=vault_rel))
-    build_index()
-    print(f"agent 준비됨: .claude/agents/{name}.md, {rel(d)}/")
 
 
 def check_write(data):
@@ -393,7 +373,7 @@ def check_write(data):
     if agent:
         d = agent_dir(agent)
         if not d:
-            return f"SmallBrain: vault는 hire된 agent만 쓴다('{agent}'는 hire 안 됨). 결과는 supervisor에게 돌려줘라."
+            return f"SmallBrain: vault는 .claude/agents/ 에 정의된 agent만 쓴다('{agent}'는 기본 agent라 등록 안 됨). 결과는 supervisor에게 돌려줘라."
         own = d.relative_to(VAULT).parts
         in_own = (len(parts) == len(own) + 2 and parts[:len(own)] == own
                   and parts[len(own)] in ("journal", "reflections"))
@@ -445,6 +425,11 @@ def hook(event):
         emit_context(event, digest())
 
     elif event == "SubagentStart":
+        if not agent_dir(agent) and NAME_RE.fullmatch(agent):
+            desc = defined_agents().get(agent)
+            if desc is not None:  # 직접 정의한 agent만 처음 일할 때 자동 등록
+                register(agent, desc)
+                build_index()
         if agent_dir(agent):
             (STATE / f"agent-{data.get('agent_id')}").write_text(str(time.time()))
             emit_context(event, digest(agent))
@@ -495,8 +480,6 @@ def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd == "init":
         init()
-    elif cmd == "hire" and len(argv) > 2:
-        hire(argv[2], " ".join(argv[3:]))
     elif cmd == "index":
         build_index()
     elif cmd == "digest":

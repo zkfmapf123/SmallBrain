@@ -2,110 +2,116 @@
 
 [한국어](README.ko.md)
 
-A Claude Code plugin for when you run several agents together. It lets them use an Obsidian vault (just a folder of markdown files) as one shared brain.
+A Claude Code plugin for projects that run one supervisor and several agents. Once installed, the agents use an Obsidian vault (a folder of markdown files) as a shared brain. They keep track of what to do, hand results to each other, and carry lessons from past mistakes into the next task.
 
 ## Why I built this
 
-I once had a team of Claude Code agents build games for me. The main Claude I talk to acted as the team lead and handed work to agents for planning, coding, and QA. I wrote rules telling everyone to keep their records in an Obsidian vault.
+I once had a team of Claude Code agents build games. The main Claude I talk to was the team lead and handed work to agents for planning, coding, and QA. I wrote rules telling everyone to keep their records in an Obsidian vault.
 
-It worked at first. A few days later the rules started slipping.
+A few days in, the rules stopped being followed.
 
-- The lead would write "fix this" in the vault, but the agent it was meant for never read that note. It made the same mistake again.
-- The table of contents went stale. A game we had already dropped was still listed as the "reference game".
-- The daily log was supposed to be written every day. After day one there were none.
+- The lead wrote "fix this" in the vault, but the agent it was meant for never read that note. It made the same mistake again.
+- The table of contents went stale. A game we had dropped was still listed as the "reference game".
+- The daily log stopped after day one.
 
-The cause was always the same: the rules only existed as text. When Claude forgets a text rule, that's the end of it.
+The rules only existed as text. When Claude forgets a text rule, that's the end of it.
 
-So this time the rules aren't text, they're mechanisms. Agents don't have to remember anything. Claude Code itself feeds them what to read, blocks what they shouldn't do, and checks their work.
+So SmallBrain turns the rules into mechanisms. Agents don't have to remember anything. Claude Code feeds them what to read, blocks what they shouldn't do, and checks their work.
 
-## A few terms first
+## Terms
 
 - **Supervisor**: the main Claude you talk to. The team lead.
-- **Sub-agents**: the other Claudes the supervisor hands work to. Each one is defined in `.claude/agents/`.
-- **Vault**: a folder of markdown files. Obsidian makes it nice to look at, but it works without Obsidian. Agents just read and write files.
-- **Hook**: a script Claude Code runs automatically at certain moments (session start, agent start, right before a file write, right before finishing). This plugin is mostly hooks.
-
-## What it actually does
-
-**When an agent starts**, it gets what it needs automatically: the current goal, its role, the principles it earned from past mistakes, and any meeting waiting for its answer. You never have to tell an agent "read this first", so it can't forget to.
-
-**When an agent tries to write a file**, the write gets checked. An agent may only write in its own folder (work journal, reflections) and its own turn files in meetings. If it tries to touch someone else's file or a shared one, the write is blocked and the agent is told why. Existing files can't be edited, only new ones created, so several agents can run at the same time without overwriting each other.
-
-**When an agent tries to finish**, the plugin checks that it left a record. If there's no journal entry or meeting turn, the agent gets sent back once with "leave a record before you finish".
-
-**When the supervisor finishes a reply**, the vault's table of contents is rebuilt. A script regenerates it every time instead of anyone editing it by hand, so it can't go stale. If the vault changed during the conversation but the human status page didn't, the supervisor is asked to update it.
-
-**Reflections need evidence.** An agent writes one only when something actually went wrong, like a failing test or a review comment. A reflection without the evidence (which test, which comment) isn't saved at all. When the same lesson shows up twice, the supervisor turns it into a principle, and from then on that principle is handed to the agent every time it starts. A principle that conflicts with an existing one needs my approval. If I ignore it for 7 days, it gets cleared away automatically.
-
-## What do I look at?
-
-Just `vault/00_system/03_status.md`. It has three things:
-
-- where things stand now
-- what was done recently (with links to the original notes)
-- what I need to decide
-
-The rest of the vault is the agents' brain. You don't need to read it. If you're curious, follow the links.
+- **Agent**: another Claude the supervisor hands work to. Each one is a file in `.claude/agents/`.
+- **Vault**: a folder of markdown files. Obsidian makes it nice to look at, but it works without Obsidian.
+- **Hook**: a script Claude Code runs automatically at certain moments (session start, agent start, right before a file write, right before finishing). SmallBrain is mostly hooks.
 
 ## Install
 
-You need Claude Code and `python3`. No other libraries.
+You need Claude Code and `python3`.
 
-Start Claude Code from the project you want to use it in:
+**Install (recommended: project scope)**
+
+Run this in the project you want to use SmallBrain in:
+
+```bash
+claude plugin install smallbrain --marketplace zkfmapf123/SmallBrain --scope project
+```
+
+With `--scope project`, SmallBrain is on only in that project. The setting goes into `.claude/settings.json`, so you can share it with your team through git. With `--scope user`, it's on in every project. That works fine, but projects without a vault get a one-line "no vault" notice at the start of every session.
+
+**Try it without installing**
 
 ```bash
 cd your-project
-claude --plugin-dir /path/to/smallbrains
+claude --plugin-dir /path/to/SmallBrain
 ```
 
-## How to use it
+It's on only for that session and gone when you quit.
 
-### Once: create the vault
+## Getting started
+
+Run this once in the project:
 
 ```
 /smallbrain:init
 ```
 
-That's the only setup step. It does two things:
-
 1. Creates a `vault/` folder in the project and asks what the project's goal is.
-2. Registers every agent already in `.claude/agents/`. Each one gets a personal folder like `vault/10_agents/11_<name>/`. **Your existing agent definition files are not touched.**
+2. Registers every agent you already have in `.claude/agents/`. Each agent gets a personal folder in the vault (`vault/10_agents/11_<name>/`). Your agent definition files are not modified.
 
-If you're adding this to a team that already runs a supervisor and several agents, you're done here. Registration matters because the hooks only treat an agent as a SmallBrain agent if it has a personal folder in the vault. An unregistered agent gets no digest, and its writes to the vault are blocked.
+That's all the setup there is. To put the vault somewhere else, set the `SMALLBRAIN_VAULT` environment variable.
 
-To put the vault somewhere else, set the `SMALLBRAIN_VAULT` environment variable.
+## Day-to-day use
 
-### Day to day: just give it work
+There are no commands to type. Tell the supervisor "build the login page" like you normally would. From there:
 
-You don't type any `/smallbrain` commands in normal use. Tell the supervisor "build the login page" and that's it. The supervisor decides who does what, and the hooks handle context, write checks, and record keeping.
+1. The supervisor splits the work and hands it to agents.
+2. When an agent starts, a hook gives it what it needs: the current goal, its role, principles from past mistakes, and any meeting waiting for its answer.
+3. When an agent writes a file, a hook checks it. An agent can only create new files in its own folder and its own meeting turn files. Anything else is blocked, and the agent is told why. Existing files can't be edited, only new ones created, so several agents can work at the same time without overwriting each other.
+4. When an agent finishes, a hook checks that it left a work journal. If not, the agent is sent back once with "leave a record before you finish".
+5. When the supervisor finishes a reply, a hook rebuilds the vault's table of contents. If the vault changed but the human status page didn't, the supervisor is asked to update it.
 
-You don't have to start meetings (`meeting`) or principle promotion (`reflect`) yourself either. Both are skills, so the supervisor picks them up on its own when it thinks they're needed. Type them only when you want to force it:
+## Adding an agent
+
+Create the agent file in `.claude/agents/` the way you normally would, by hand or with the `/agents` command. SmallBrain registers it automatically the first time it gets work.
+
+Claude Code's built-in agents such as Explore and Plan are not registered. If they try to write to the vault, they're blocked. They return results to the supervisor, and the supervisor does the recording.
+
+## Meetings
+
+When several agents' opinions are needed, the supervisor opens a meeting on its own. To start one yourself:
 
 ```
 /smallbrain:meeting Decide the auth method
-/smallbrain:reflect
 ```
 
-- **meeting**: the supervisor opens a meeting room under `vault/20_threads/`. Agents each write their own turn files, and after each round the supervisor sums up what's agreed and what's still open. At most 3 rounds; the outcome goes to `40_knowledge/41_decisions/`.
-- **reflect**: turns any lesson that appears at least twice in an agent's reflections into a principle. A lesson that appeared once could be a fluke, so it stays where it is.
+The supervisor runs the meeting:
 
-### Agents can't talk to each other directly
+1. It creates a meeting note under `vault/20_threads/`.
+2. It calls the attending agents one at a time. Each agent reads the turns so far and adds its own turn as a new file.
+3. After each round, the supervisor writes down what's agreed and what's still open.
+4. At most 3 rounds. The outcome is saved as a decision note in `40_knowledge/41_decisions/`.
 
-In Claude Code, a sub-agent can't call another sub-agent. That's a Claude Code limit, not something this plugin adds. So agents talk through files. Each one leaves a turn file in the meeting room, the supervisor calls the next one, and that agent reads the earlier turns before answering. They aren't talking live, they're passing the same notebook around.
+Agents go through the supervisor instead of calling each other because in Claude Code only the supervisor can call agents.
 
-### Adding a new agent
+## Reflections and principles
 
-```
-/smallbrain:hire builder Implements features
-```
+- An agent writes a reflection when something actually went wrong: a failing test, a review comment, or a correction from you. A reflection without that evidence isn't saved.
+- When the same lesson shows up twice, the supervisor turns it into a principle. Once could be a fluke, so a single occurrence stays a reflection. To force it, type `/smallbrain:reflect`.
+- From then on, the principle is handed to that agent every time it starts work.
+- A principle that conflicts with an existing one needs your approval. It shows up on your status page, and if you leave it for 7 days it's cleared away automatically.
 
-This creates the agent definition (`.claude/agents/builder.md`) and its vault folder in one step. I made it do both because I once hired an agent and forgot to add it to the roster. If you wrote the agent file yourself, just run `/smallbrain:init` again. It skips agents that are already registered and only adds new ones. If a new agent doesn't show up in the list, restart the session.
+## What you look at
 
-### If you already have a vault
+Just `vault/00_system/03_status.md`. It has three things:
 
-An existing vault with a different layout can't be picked up as is. SmallBrain expects its own layout (below). I'd make a fresh vault and move over only the notes you need.
+- where things stand now
+- what was done recently (with links to the original notes)
+- what you need to decide
 
-## What the vault looks like
+The rest of the vault is the agents' records. You don't need to read it. Follow the links if you're curious.
+
+## Vault layout
 
 ```
 vault/
@@ -127,9 +133,9 @@ vault/
 └─ 90_archive/         notes that were cleared away
 ```
 
-Folders are numbered by function in steps of 10. Splitting by agent instead makes it unclear where shared notes like meetings and decisions should go.
+Folders are numbered by function in steps of 10. Splitting by agent instead would leave no clear place for shared notes like meetings and decisions.
 
-## When something looks wrong
+## Troubleshooting
 
 You can see exactly what an agent receives when it starts:
 
@@ -140,8 +146,8 @@ python3 scripts/brain.py index            # rebuild the table of contents
 python3 tests/test_brain.py               # tests
 ```
 
-## What's still missing
+## Known gaps
 
-- The write check only covers Claude's Write and Edit tools. If an agent writes a file through a terminal command, it isn't blocked. I'll add that if I see agents actually doing it.
-- I haven't measured yet whether this is really more efficient. I'm comparing it against the records from my old game project (tokens and time per task).
-- Not built yet: a git commit per meeting round, automatically confirming principles that hold up, and summarizing and clearing out old notes.
+- The write check only covers Claude's Write and Edit tools. If an agent writes a file through a terminal command, it isn't blocked.
+- Whether this is actually more efficient hasn't been measured yet. That's being tested now.
+- Not built yet: a git commit per meeting round, automatically confirming principles that hold up, and summarizing old notes.
