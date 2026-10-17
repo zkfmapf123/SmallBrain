@@ -2,110 +2,146 @@
 
 [한국어](README.ko.md)
 
-A Claude Code plugin that turns an Obsidian vault into a shared brain for a supervisor (your main session) and its sub-agents.
+A Claude Code plugin for when you run several agents together. It lets them use an Obsidian vault (just a folder of markdown files) as one shared brain.
 
-Agents don't have to remember to read or write notes. Hooks inject the right context when an agent starts, enforce who may write where, and refuse to let an agent finish without leaving a record.
+## Why I built this
 
-## How it works
+I once had a team of Claude Code agents build games for me. The main Claude I talk to acted as the team lead and handed work to agents for planning, coding, and QA. I wrote rules telling everyone to keep their records in an Obsidian vault.
 
-| Hook | What it does |
-|---|---|
-| `SessionStart` | Gives the supervisor the current goal, the human status page, open threads, and its rules |
-| `SubagentStart` | Gives each hired agent a short digest: current goal, its role, its principles, threads waiting for it, write rules |
-| `PreToolUse` | Checks vault writes by `agent_type`: an agent may only create new files in its own `journal/`, `reflections/`, and its own thread turns. Requires frontmatter; a reflection needs a `signal` |
-| `SubagentStop` | Blocks an agent from finishing (once) if it left no journal or turn |
-| `Stop` | Rebuilds the index, archives approvals pending over 7 days, and asks the supervisor to update `03_status.md` if the vault changed |
+It worked at first. A few days later the rules started slipping.
 
-## Requirements
+- The lead would write "fix this" in the vault, but the agent it was meant for never read that note. It made the same mistake again.
+- The table of contents went stale. A game we had already dropped was still listed as the "reference game".
+- The daily log was supposed to be written every day. After day one there were none.
 
-- Claude Code with plugin support
-- `python3` (standard library only)
-- Obsidian is optional. It is only for you to read the vault
+The cause was always the same: the rules only existed as text. When Claude forgets a text rule, that's the end of it.
+
+So this time the rules aren't text, they're mechanisms. Agents don't have to remember anything. Claude Code itself feeds them what to read, blocks what they shouldn't do, and checks their work.
+
+## A few terms first
+
+- **Supervisor**: the main Claude you talk to. The team lead.
+- **Sub-agents**: the other Claudes the supervisor hands work to. Each one is defined in `.claude/agents/`.
+- **Vault**: a folder of markdown files. Obsidian makes it nice to look at, but it works without Obsidian. Agents just read and write files.
+- **Hook**: a script Claude Code runs automatically at certain moments (session start, agent start, right before a file write, right before finishing). This plugin is mostly hooks.
+
+## What it actually does
+
+**When an agent starts**, it gets what it needs automatically: the current goal, its role, the principles it earned from past mistakes, and any meeting waiting for its answer. You never have to tell an agent "read this first", so it can't forget to.
+
+**When an agent tries to write a file**, the write gets checked. An agent may only write in its own folder (work journal, reflections) and its own turn files in meetings. If it tries to touch someone else's file or a shared one, the write is blocked and the agent is told why. Existing files can't be edited, only new ones created, so several agents can run at the same time without overwriting each other.
+
+**When an agent tries to finish**, the plugin checks that it left a record. If there's no journal entry or meeting turn, the agent gets sent back once with "leave a record before you finish".
+
+**When the supervisor finishes a reply**, the vault's table of contents is rebuilt. A script regenerates it every time instead of anyone editing it by hand, so it can't go stale. If the vault changed during the conversation but the human status page didn't, the supervisor is asked to update it.
+
+**Reflections need evidence.** An agent writes one only when something actually went wrong, like a failing test or a review comment. A reflection without the evidence (which test, which comment) isn't saved at all. When the same lesson shows up twice, the supervisor turns it into a principle, and from then on that principle is handed to the agent every time it starts. A principle that conflicts with an existing one needs my approval. If I ignore it for 7 days, it gets cleared away automatically.
+
+## What do I look at?
+
+Just `vault/00_system/03_status.md`. It has three things:
+
+- where things stand now
+- what was done recently (with links to the original notes)
+- what I need to decide
+
+The rest of the vault is the agents' brain. You don't need to read it. If you're curious, follow the links.
 
 ## Install
 
-Load it locally from the folder you want to use it in:
+You need Claude Code and `python3`. No other libraries.
+
+Start Claude Code from the project you want to use it in:
 
 ```bash
 cd your-project
 claude --plugin-dir /path/to/smallbrains
 ```
 
-## Usage
+## How to use it
 
-### 1. Create the vault
+### Once: create the vault
 
 ```
 /smallbrain:init
 ```
 
-Creates `vault/` in the project and asks for the project goal. To use another location, set `SMALLBRAIN_VAULT` (relative to the project root).
+That's the only setup step. It does two things:
 
-### 2. Hire agents
+1. Creates a `vault/` folder in the project and asks what the project's goal is.
+2. Registers every agent already in `.claude/agents/`. Each one gets a personal folder like `vault/10_agents/11_<name>/`. **Your existing agent definition files are not touched.**
 
-```
-/smallbrain:hire builder Implements features
-/smallbrain:hire reviewer Reviews code and tests
-```
+If you're adding this to a team that already runs a supervisor and several agents, you're done here. Registration matters because the hooks only treat an agent as a SmallBrain agent if it has a personal folder in the vault. An unregistered agent gets no digest, and its writes to the vault are blocked.
 
-Each call creates `.claude/agents/<name>.md` and `vault/10_agents/NN_<name>/`. Restart the session if a new agent doesn't show up.
+To put the vault somewhere else, set the `SMALLBRAIN_VAULT` environment variable.
 
-### 3. Work as usual
+### Day to day: just give it work
 
-Give the supervisor a task, for example "Build the login page". It delegates to the hired agents, and the hooks handle context injection and record keeping.
+You don't type any `/smallbrain` commands in normal use. Tell the supervisor "build the login page" and that's it. The supervisor decides who does what, and the hooks handle context, write checks, and record keeping.
 
-### 4. Hold a meeting when you need several opinions
+You don't have to start meetings (`meeting`) or principle promotion (`reflect`) yourself either. Both are skills, so the supervisor picks them up on its own when it thinks they're needed. Type them only when you want to force it:
 
 ```
-/smallbrain:meeting Choose the auth method
-```
-
-The supervisor opens a thread in `vault/20_threads/`, runs up to 3 rounds where each agent writes its own turn file, then records the decision in `40_knowledge/41_decisions/`.
-
-### 5. Promote lessons
-
-```
+/smallbrain:meeting Decide the auth method
 /smallbrain:reflect
 ```
 
-When the same lesson appears twice in an agent's `reflections/`, the supervisor turns it into a principle (`status: trial`). A principle that conflicts with an existing one becomes `pending-approval` and shows up on your status page.
+- **meeting**: the supervisor opens a meeting room under `vault/20_threads/`. Agents each write their own turn files, and after each round the supervisor sums up what's agreed and what's still open. At most 3 rounds; the outcome goes to `40_knowledge/41_decisions/`.
+- **reflect**: turns any lesson that appears at least twice in an agent's reflections into a principle. A lesson that appeared once could be a fluke, so it stays where it is.
 
-### 6. Check the status
+### Agents can't talk to each other directly
 
-Open `vault/00_system/03_status.md` in Obsidian. It has three sections: current state, recent work, and decisions waiting for you. Approve or reject pending principles there. Anything left pending for 7 days is archived automatically.
+In Claude Code, a sub-agent can't call another sub-agent. That's a Claude Code limit, not something this plugin adds. So agents talk through files. Each one leaves a turn file in the meeting room, the supervisor calls the next one, and that agent reads the earlier turns before answering. They aren't talking live, they're passing the same notebook around.
 
-## Vault layout
+### Adding a new agent
+
+```
+/smallbrain:hire builder Implements features
+```
+
+This creates the agent definition (`.claude/agents/builder.md`) and its vault folder in one step. I made it do both because I once hired an agent and forgot to add it to the roster. If you wrote the agent file yourself, just run `/smallbrain:init` again. It skips agents that are already registered and only adds new ones. If a new agent doesn't show up in the list, restart the session.
+
+### If you already have a vault
+
+An existing vault with a different layout can't be picked up as is. SmallBrain expects its own layout (below). I'd make a fresh vault and move over only the notes you need.
+
+## What the vault looks like
 
 ```
 vault/
 ├─ 00_system/
-│  ├─ 00_index.md      # generated, do not edit
-│  ├─ 01_rules.md      # vault rules
-│  ├─ 02_now.md        # for agents: goal, progress, next steps
-│  └─ 03_status.md     # for you: overwritten by the supervisor
-├─ 10_agents/NN_<name>/
-│  ├─ profile.md       # role
-│  ├─ principles/      # promoted principles (supervisor only)
-│  ├─ reflections/     # lessons from failure signals
-│  └─ journal/         # work records
-├─ 20_threads/<YYYY-MM-DD-topic>/
-│  ├─ index.md         # agenda and agreement summary (supervisor)
-│  └─ turns/YYYYMMDD-HHMM-<name>.md
-├─ 30_projects/
-├─ 40_knowledge/{41_decisions,42_lessons}/
-└─ 90_archive/
+│  ├─ 00_index.md      table of contents, made by a script, don't edit
+│  ├─ 01_rules.md      vault rules
+│  ├─ 02_now.md        current goal and progress, for agents
+│  └─ 03_status.md     status page, for you
+├─ 10_agents/11_builder/
+│  ├─ profile.md       role
+│  ├─ principles/      principles (only the supervisor writes here)
+│  ├─ reflections/     reflections
+│  └─ journal/         work journal
+├─ 20_threads/2026-10-17-auth-method/
+│  ├─ index.md         agenda and what's agreed
+│  └─ turns/           one file per turn
+├─ 30_projects/        deliverable documents
+├─ 40_knowledge/       decisions, shared lessons
+└─ 90_archive/         notes that were cleared away
 ```
 
-## Debugging
+Folders are numbered by function in steps of 10. Splitting by agent instead makes it unclear where shared notes like meetings and decisions should go.
+
+## When something looks wrong
+
+You can see exactly what an agent receives when it starts:
 
 ```bash
-python3 scripts/brain.py digest builder   # what builder receives at start
-python3 scripts/brain.py digest           # what the supervisor receives
-python3 scripts/brain.py index            # rebuild the index
-python3 tests/test_brain.py               # run the tests
+python3 scripts/brain.py digest builder   # what builder gets
+python3 scripts/brain.py digest           # what the supervisor gets
+python3 scripts/brain.py index            # rebuild the table of contents
+python3 tests/test_brain.py               # tests
 ```
 
-## Limitations
+## What's still missing
 
-- Only `Write`/`Edit` are checked. Files written through Bash bypass the write rules.
-- Not built yet: per-round git commits, automatic trial-to-active promotion, a consolidate skill.
+- The write check only covers Claude's Write and Edit tools. If an agent writes a file through a terminal command, it isn't blocked. I'll add that if I see agents actually doing it.
+- I haven't measured yet whether this is really more efficient. I'm comparing it against the records from my old game project (tokens and time per task).
+- Not built yet: a git commit per meeting round, automatically confirming principles that hold up, and summarizing and clearing out old notes.

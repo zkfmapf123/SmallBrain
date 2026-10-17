@@ -321,20 +321,34 @@ def digest(agent=None):
     ])
 
 
+NAME_RE = re.compile(r"[a-z][a-z0-9-]*")
+
+
 def init():
+    """vault를 만들고 .claude/agents/ 에 이미 있는 agent를 전부 등록한다. 다시 실행해도 안전하다."""
     for d in DIRS:
         (VAULT / d).mkdir(parents=True, exist_ok=True)
     for name, tpl in (("01_rules.md", RULES), ("02_now.md", NOW), ("03_status.md", STATUS)):
         write_new(VAULT / "00_system" / name, tpl.replace("{today}", today()))
+    added, skipped = [], []
+    for f in sorted((PROJECT / ".claude" / "agents").glob("*.md")):
+        fm = meta(f)[0]
+        name = fm.get("name") or f.stem
+        if not NAME_RE.fullmatch(name):
+            skipped.append(name)
+        elif not agent_dir(name):
+            register(name, fm.get("description") or "")
+            added.append(name)
     build_index()
     print(f"vault 준비됨: {VAULT}")
+    if added:
+        print(f"기존 agent 등록: {', '.join(added)}")
+    if skipped:
+        print(f"이름이 소문자 kebab-case가 아니라 건너뜀: {', '.join(skipped)}")
 
 
-def hire(name, role=""):
-    if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
-        sys.exit("agent 이름은 소문자 kebab-case여야 한다 (예: builder, code-reviewer)")
-    if not (VAULT / "10_agents").is_dir():
-        sys.exit("vault가 없다. 먼저 init")
+def register(name, role):
+    """vault에 agent 폴더를 만든다. agent 정의 파일은 건드리지 않는다."""
     d = agent_dir(name)
     if not d:
         nums = [int(x.name.partition("_")[0]) for x in agent_dirs() if x.name.partition("_")[0].isdigit()]
@@ -342,6 +356,15 @@ def hire(name, role=""):
     for sub in ("principles", "reflections", "journal"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     write_new(d / "profile.md", PROFILE.format(today=today(), name=name, role=role or "(역할 미정)"))
+    return d
+
+
+def hire(name, role=""):
+    if not NAME_RE.fullmatch(name):
+        sys.exit("agent 이름은 소문자 kebab-case여야 한다 (예: builder, code-reviewer)")
+    if not (VAULT / "10_agents").is_dir():
+        sys.exit("vault가 없다. 먼저 init")
+    d = register(name, role)
     vault_rel = os.path.relpath(VAULT, PROJECT)
     write_new(PROJECT / ".claude" / "agents" / f"{name}.md", AGENT.format(
         name=name, desc=role or "TODO: supervisor가 언제 이 agent를 부를지 한 줄로",

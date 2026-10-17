@@ -37,6 +37,16 @@ run("hire", "code-reviewer", "리뷰 담당")
 assert (TMP / ".claude/agents/builder.md").exists()
 assert (V / "10_agents/11_builder/journal").is_dir() and (V / "10_agents/12_code-reviewer").is_dir()
 
+# 이미 있던 agent는 init 재실행으로 등록되고, 정의 파일은 그대로다
+legacy = TMP / ".claude/agents/legacy-dev.md"
+legacy.write_text("---\nname: legacy-dev\ndescription: 기존 개발자\n---\n원래 지침\n")
+(TMP / ".claude/agents/Bad_Name.md").write_text("원래 지침\n")
+out = run("init")
+assert "legacy-dev" in out and "Bad_Name" in out
+assert "기존 개발자" in (V / "10_agents/13_legacy-dev/profile.md").read_text()
+assert legacy.read_text().endswith("원래 지침\n") and "## Brain" not in legacy.read_text()
+assert not (V / "10_agents/14_builder").exists()  # 재실행해도 중복 등록 없음
+
 # PreToolUse 권한
 assert write("builder", "10_agents/11_builder/journal/2026-10-17-1400.md", FM.format(a="builder")) == "allow"
 assert write("smallbrain:builder", "10_agents/11_builder/journal/x.md", FM.format(a="builder")) == "allow"
